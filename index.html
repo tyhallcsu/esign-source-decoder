@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ESign → SideStore Importer</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }
+  h1 { margin-bottom: .25rem; }
+  h2 { margin-top: 2rem; border-top: 1px solid #8884; padding-top: 1.25rem; }
+  p.sub { color: #666; margin-top: 0; }
+  textarea { width: 100%; min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; padding: .6rem; box-sizing: border-box; }
+  input[type=url], input[type=text] { width: 100%; padding: .5rem .6rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; box-sizing: border-box; }
+  button { padding: .55rem 1rem; font-size: 14px; cursor: pointer; }
+  .row { display: flex; gap: .5rem; margin: .75rem 0; flex-wrap: wrap; align-items: center; }
+  ul { list-style: none; padding: 0; }
+  li { padding: .6rem .75rem; margin: .4rem 0; border: 1px solid #8884; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: .75rem; flex-wrap: wrap; }
+  li .url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; flex: 1; min-width: 240px; }
+  a.btn { background: #2a7; color: #fff; padding: .45rem .8rem; border-radius: 6px; text-decoration: none; white-space: nowrap; font-size: 13px; }
+  a.btn.alt  { background: #27a; }
+  a.btn.copy { background: #555; }
+  details { margin-top: 1.5rem; }
+  code { background: #8881; padding: 1px 5px; border-radius: 3px; }
+  .err { color: #c33; font-size: 13px; white-space: pre-wrap; }
+  .ok  { color: #2a7; font-size: 13px; }
+  small { color: #888; }
+</style>
+</head>
+<body>
+
+<h1>ESign → SideStore Importer</h1>
+<p class="sub">Paste an ESign <code>source[…]</code> share blob, decode it client-side, and get one-tap <code>sidestore://</code> / <code>altstore://</code> links for each source URL.</p>
+
+<h2>1. Decode an ESign <code>source[…]</code> blob</h2>
+<p class="sub">Format: ESign exports its source list as <code>source[base64(bytes)]</code>, where the bytes are XOR-encrypted with a 5055-byte fixed key embedded in the ESign app. Algorithm from <a href="https://github.com/magic-bdg/Backdoor/blob/main/Shared/Magic/esign/ESignRepoParser.swift" target="_blank" rel="noopener">Backdoor/ESignRepoParser.swift</a>; same key as <a href="https://github.com/magic-bdg/Backdoor/blob/main/Shared/Magic/esign/ESignRepoKey.swift" target="_blank" rel="noopener">ESignRepoKey.swift</a>.</p>
+<textarea id="esignInput" placeholder="source[5GHxhb1U7Lc5jIMpumASbN2teg9dyK5EAazzwnfm1/g=]"></textarea>
+<div class="row">
+  <button id="goDecode">Decode</button>
+  <span id="decodeStatus"><small></small></span>
+</div>
+
+<h2>2. Source URLs</h2>
+<p class="sub">One URL per line. Tap <b>Add to SideStore</b> on your iPhone/iPad to import each.</p>
+<textarea id="urlInput" placeholder="https://apps.sidestore.io/apps.json"></textarea>
+<div class="row">
+  <button id="goUrls">Build links</button>
+  <button id="clearUrls">Clear</button>
+  <button id="addAllSide">Open all in SideStore</button>
+  <button id="addAllAlt">Open all in AltStore</button>
+</div>
+<ul id="urlOut"></ul>
+
+<details>
+<summary>3. (Optional) Convert an ESign-style apps JSON → AltStore format</summary>
+<p class="sub">Port of <a href="https://github.com/asdfzxcvbn/altSourceConverter" target="_blank" rel="noopener">altSourceConverter</a>. Fetches a plaintext ESign-style <code>.json</code> repo and groups it into AltStore-compatible JSON (apps with <code>versions[]</code>). Remote must be CORS-friendly, otherwise paste the JSON directly.</p>
+<input type="url" id="convUrl" placeholder="https://example.com/esign-source.json" />
+<div class="row">
+  <button id="goConv">Fetch &amp; convert</button>
+  <button id="downloadConv" disabled>Download .altsource.json</button>
+</div>
+<div id="convStatus"></div>
+<textarea id="convOut" placeholder="Or paste ESign-style JSON here to convert locally" style="min-height:220px;"></textarea>
+<div class="row"><button id="goConvLocal">Convert pasted JSON</button></div>
+</details>
+
+<script>
+/* ===== Embedded ESign 5055-byte XOR key (from Backdoor/ESignRepoKey.swift) ===== */
+const ESIGN_KEY_B64 = "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";
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+const ESIGN_KEY = b64ToBytes(ESIGN_KEY_B64);
+
+function decodeEsignBlob(input) {
+  const m = input.match(/source\[([\s\S]*?)\]/);
+  const b64 = (m ? m[1] : input).replace(/\s+/g, "");
+  const ct = b64ToBytes(b64);
+  const pt = new Uint8Array(ct.length);
+  const keyLen = ESIGN_KEY.length;
+  for (let i = 0; i < ct.length; i++) pt[i] = ct[i] ^ ESIGN_KEY[i % keyLen];
+  return new TextDecoder("utf-8").decode(pt);
+}
+
+const URL_SCHEMES = [
+  { label: "Add to SideStore", scheme: "sidestore", cls: "" },
+  { label: "Add to AltStore",  scheme: "altstore",  cls: "alt" },
+];
+
+function renderUrlButtons(urls) {
+  const out = document.getElementById("urlOut");
+  out.innerHTML = "";
+  urls.forEach(url => {
+    const li = document.createElement("li");
+    const span = document.createElement("span");
+    span.className = "url";
+    span.textContent = url;
+    li.appendChild(span);
+
+    URL_SCHEMES.forEach(s => {
+      const a = document.createElement("a");
+      a.className = "btn " + s.cls;
+      a.href = `${s.scheme}://source?url=${encodeURIComponent(url)}`;
+      a.textContent = s.label;
+      li.appendChild(a);
+    });
+
+    const copy = document.createElement("a");
+    copy.className = "btn copy";
+    copy.href = "#";
+    copy.textContent = "Copy";
+    copy.onclick = e => {
+      e.preventDefault();
+      navigator.clipboard.writeText(url);
+      copy.textContent = "Copied";
+      setTimeout(() => copy.textContent = "Copy", 1200);
+    };
+    li.appendChild(copy);
+
+    out.appendChild(li);
+  });
+}
+
+function currentUrls() {
+  return document.getElementById("urlInput").value
+    .split(/\r?\n/).map(s => s.trim())
+    .filter(s => /^https?:\/\//i.test(s));
+}
+
+document.getElementById("goDecode").onclick = () => {
+  const status = document.querySelector("#decodeStatus small");
+  try {
+    const txt = decodeEsignBlob(document.getElementById("esignInput").value);
+    const urls = txt.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    document.getElementById("urlInput").value = urls.join("\n");
+    renderUrlButtons(urls.filter(u => /^https?:\/\//i.test(u)));
+    status.className = "ok";
+    status.textContent = `Decoded ${urls.length} line(s).`;
+  } catch (e) {
+    status.className = "err";
+    status.textContent = "Decode failed: " + e.message;
+  }
+};
+document.getElementById("goUrls").onclick = () => renderUrlButtons(currentUrls());
+document.getElementById("clearUrls").onclick = () => {
+  document.getElementById("urlInput").value = "";
+  document.getElementById("urlOut").innerHTML = "";
+};
+document.getElementById("addAllSide").onclick = () => openAll("sidestore");
+document.getElementById("addAllAlt").onclick  = () => openAll("altstore");
+function openAll(scheme) {
+  const urls = currentUrls();
+  if (!urls.length) return;
+  if (!confirm(`Open all ${urls.length} ${scheme}:// import links? Your device will prompt for each.`)) return;
+  urls.forEach((u, i) => {
+    setTimeout(() => { window.location.href = `${scheme}://source?url=${encodeURIComponent(u)}`; }, i * 1200);
+  });
+}
+
+/* ---- altSourceConverter JS port ---- */
+function convertEsignToAltStore(orig) {
+  if (!orig || !Array.isArray(orig.apps)) throw new Error("input has no 'apps' array");
+  const idxs = new Map();
+  orig.apps.forEach((app, i) => {
+    const bid = app.bundleIdentifier;
+    if (!bid) return;
+    if (!idxs.has(bid)) idxs.set(bid, []);
+    idxs.get(bid).push(i);
+  });
+  const apps = [];
+  for (const [bundle, indexes] of idxs) {
+    const first = orig.apps[indexes[0]];
+    const versions = indexes.map(i => {
+      const a = orig.apps[i];
+      return { version: a.version, date: a.versionDate, localizedDescription: a.localizedDescription, downloadURL: a.downloadURL, size: a.size };
+    });
+    apps.push({
+      name: first.name,
+      bundleIdentifier: bundle,
+      developerName: first.developerName ?? "",
+      localizedDescription: first.localizedDescription ?? "",
+      iconURL: first.iconURL,
+      versions,
+      appPermissions: { entitlements: [], privacy: [] },
+      downloadURL: versions[0].downloadURL,
+    });
+  }
+  return { ...orig, apps };
+}
+let lastConverted = null;
+let lastConvertedName = "converted.altsource.json";
+function runConvert(jsonText, nameHint) {
+  const out = convertEsignToAltStore(JSON.parse(jsonText));
+  lastConverted = JSON.stringify(out, null, 2);
+  document.getElementById("convOut").value = lastConverted;
+  lastConvertedName = (nameHint || "source").replace(/\.json$/i, "") + ".altsource.json";
+  document.getElementById("downloadConv").disabled = false;
+  document.getElementById("convStatus").innerHTML =
+    `<span class="ok">Converted ${out.apps.length} app(s).</span>`;
+}
+document.getElementById("goConv").onclick = async () => {
+  const url = document.getElementById("convUrl").value.trim();
+  const st = document.getElementById("convStatus");
+  st.innerHTML = "";
+  if (!/^https?:\/\//i.test(url)) { st.innerHTML = `<span class="err">Enter a full http(s) URL.</span>`; return; }
+  try {
+    st.textContent = "Fetching…";
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    runConvert(await res.text(), url.split("/").pop() || "source.json");
+  } catch (e) {
+    st.innerHTML = `<span class="err">Failed: ${e.message}\n(Server may lack CORS; paste the JSON into the text box and click Convert pasted JSON.)</span>`;
+  }
+};
+document.getElementById("goConvLocal").onclick = () => {
+  const st = document.getElementById("convStatus");
+  st.innerHTML = "";
+  try { runConvert(document.getElementById("convOut").value, "pasted"); }
+  catch (e) { st.innerHTML = `<span class="err">Failed: ${e.message}</span>`; }
+};
+document.getElementById("downloadConv").onclick = () => {
+  if (!lastConverted) return;
+  const blob = new Blob([lastConverted], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = lastConvertedName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+
+/* ---- Prefill with the blob you shared ---- */
+const PREFILL_BLOB = "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";
+document.getElementById("esignInput").value = PREFILL_BLOB;
+document.getElementById("goDecode").click();
+</script>
+</body>
+</html>
